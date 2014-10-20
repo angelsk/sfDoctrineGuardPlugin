@@ -30,11 +30,22 @@ class sfGuardSecurityUser extends sfBasicSecurityUser
   {
     parent::initialize($dispatcher, $storage, $options);
 
-    if (!$this->isAuthenticated())
+    // Ensure session completely destroy on timeout/ logout
+    if (!$this->isAuthenticated() && $this->timedout)
     {
-      // remove user if timeout
-      $this->getAttributeHolder()->removeNamespace('sfGuardSecurityUser');
-      $this->user = null;
+        // reset and clear everything if timeout
+        $this->user = null;
+        $this->clearCredentials();
+        $this->setAuthenticated(false);
+        $this->getAttributeHolder()->clear();
+
+        // For good measure - regen session
+        if (sfConfig::get('sf_environment') != 'test')
+        {
+            session_destroy();
+            session_write_close();
+            session_regenerate_id();
+        }
     }
   }
 
@@ -137,16 +148,16 @@ class sfGuardSecurityUser extends sfBasicSecurityUser
       $expiration_age = sfConfig::get('app_sf_guard_plugin_remember_key_expiration_age', 15 * 24 * 3600);
 
       // remove old keys
-      Doctrine_Core::getTable('sfGuardRememberKey')->createQuery()
-        ->delete()
-        ->where('created_at < ?', date('Y-m-d H:i:s', time() - $expiration_age))
-        ->execute();
+      sfGuardRememberKeyTable::getInstance()->createQuery()
+                                            ->delete()
+                                            ->where('created_at < ?', date('Y-m-d H:i:s', time() - $expiration_age))
+                                            ->execute();
 
       // remove other keys from this user
-      Doctrine_Core::getTable('sfGuardRememberKey')->createQuery()
-        ->delete()
-        ->where('user_id = ?', $user->getId())
-        ->execute();
+      sfGuardRememberKeyTable::getInstance()->createQuery()
+                                            ->delete()
+                                            ->where('user_id = ?', $user->getId())
+                                            ->execute();
 
       // generate new keys
       $key = $this->generateRandomKey();
@@ -160,7 +171,10 @@ class sfGuardSecurityUser extends sfBasicSecurityUser
 
       // make key as a cookie
       $remember_cookie = sfConfig::get('app_sf_guard_plugin_remember_cookie_name', 'sfRemember');
-      sfContext::getInstance()->getResponse()->setCookie($remember_cookie, $key, time() + $expiration_age);
+
+      // UPDATED: To Ensure sfRemember me cookie is Secure and HTTP only
+      $secure = sfContext::getInstance()->getRequest()->isSecure();
+      sfContext::getInstance()->getResponse()->setCookie($remember_cookie, $key, time() + $expiration_age, '/', $secure, true);
     }
   }
 
@@ -181,13 +195,27 @@ class sfGuardSecurityUser extends sfBasicSecurityUser
    */
   public function signOut()
   {
-    $this->getAttributeHolder()->removeNamespace('sfGuardSecurityUser');
+    // reset and clear everything
     $this->user = null;
     $this->clearCredentials();
     $this->setAuthenticated(false);
+    $this->getAttributeHolder()->clear();
+
+    // undo sfRememberMe
     $expiration_age = sfConfig::get('app_sf_guard_plugin_remember_key_expiration_age', 15 * 24 * 3600);
     $remember_cookie = sfConfig::get('app_sf_guard_plugin_remember_cookie_name', 'sfRemember');
-    sfContext::getInstance()->getResponse()->setCookie($remember_cookie, '', time() - $expiration_age);
+
+    // UPDATED: To Ensure sfRemember me cookie is Secure and HTTP only
+    $secure = sfContext::getInstance()->getRequest()->isSecure();
+    sfContext::getInstance()->getResponse()->setCookie($remember_cookie, '', time() - $expiration_age, '/', '', $secure, true);
+
+    // For good measure - regen session
+    if (sfConfig::get('sf_environment') != 'test')
+    {
+        session_destroy();
+        session_write_close();
+        session_regenerate_id();
+    }
   }
 
   /**

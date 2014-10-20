@@ -77,6 +77,10 @@ sfGuardUser:
       default: false
     last_login:
       type: timestamp
+    locked:                  
+      type: boolean
+      default: false
+      notnull: true
   indexes:
     is_active_idx:
       fields: [is_active]
