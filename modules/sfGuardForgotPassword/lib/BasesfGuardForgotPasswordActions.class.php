@@ -74,7 +74,10 @@ abstract class BasesfGuardForgotPasswordActions extends sfActions
   {
     $this->forgotPassword = $this->getRoute()->getObject();
     $this->user = $this->forgotPassword->User;
-    $this->form = new sfGuardChangeUserPasswordForm($this->user);
+
+    $class = sfConfig::get('app_sf_guard_plugin_change_password_form', 'sfGuardChangeUserPasswordForm');
+
+    $this->form = new $class($this->user);
 
     if ($request->isMethod('post'))
     {

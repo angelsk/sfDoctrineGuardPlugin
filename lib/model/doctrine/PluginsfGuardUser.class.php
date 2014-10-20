@@ -35,6 +35,106 @@ abstract class PluginsfGuardUser extends BasesfGuardUser
   }
 
   /**
+   * Before saving a user - create password history row
+   *
+   * @param Doctrine_Event $event
+   */
+  public function preInsert($event)
+  {
+    $invoker = $event->getInvoker();
+
+    $password = new sfGuardUserPassword();
+    $password->fromArray(
+            array(
+                    'user_id'   => $invoker->id,
+                    'salt'      => $invoker->salt,
+                    'algorithm' => $invoker->algorithm,
+                    'password'  => $invoker->password
+            )
+    );
+
+    $invoker->PasswordHistory->add($password);
+
+    try
+    {
+      $user_id = sfContext::getInstance()->getUser()->getAttribute('user_id', time(), 'sfGuardSecurityUser');
+
+      if ($user_id == $invoker->id) sfContext::getInstance()->getUser()->setAttribute('password_date', time(), 'sfGuardSecurityUser'); // if changing own password
+    }
+    catch (sfException $e) {} // if on CLI and default context doesn't exist
+  }
+
+  /**
+   * Before updating a user - check if password changed and create password history row
+   *
+   * @param Doctrine_Event $event
+   */
+  public function preUpdate($event)
+  {
+    $invoker  = $event->getInvoker();
+    $modified = $this->getModified(true, false);
+
+    if (array_key_exists('password', $modified)) // new password or no password set previously - a null value returns false for isset
+    {
+      // Delete old passwords
+      sfGuardUserPasswordTable::getInstance()->deleteOldPasswords($invoker->id);
+
+      $password = new sfGuardUserPassword();
+      $password->fromArray(
+              array(
+                      'user_id'   => $invoker->id,
+                      'salt'      => $invoker->salt,
+                      'algorithm' => $invoker->algorithm,
+                      'password'  => $invoker->password
+              )
+      );
+
+      $invoker->PasswordHistory->add($password);
+
+      try
+      {
+        $user_id = sfContext::getInstance()->getUser()->getAttribute('user_id', time(), 'sfGuardSecurityUser');
+
+        if ($user_id == $invoker->id) sfContext::getInstance()->getUser()->setAttribute('password_date', time(), 'sfGuardSecurityUser'); // if changing own password
+      }
+      catch (sfException $e) {} // if on CLI and default context doesn't exist
+    }
+  }
+
+  /**
+   * Creates the user password hash - based off setPassword($password)
+   *
+   * @param string $password
+   * @return string
+   */
+  public function createPasswordHash($password)
+  {
+    if (!$password && 0 == strlen($password)) return;
+
+    if (!$salt = $this->getSalt())
+    {
+      $salt = md5(rand(100000, 999999).$this->getUsername());
+      $this->setSalt($salt);
+    }
+
+    $modified = $this->getModified();
+
+    if ((!$algorithm = $this->getAlgorithm()) || (isset($modified['algorithm']) && $modified['algorithm'] == $this->getTable()->getDefaultValueOf('algorithm')))
+    {
+      $algorithm = sfConfig::get('app_sf_guard_plugin_algorithm_callable', 'sha1');
+    }
+
+    $algorithmAsStr = is_array($algorithm) ? $algorithm[0].'::'.$algorithm[1] : $algorithm;
+
+    if (!is_callable($algorithm))
+    {
+      throw new sfException(sprintf('The algorithm callable "%s" is not callable.', $algorithmAsStr));
+    }
+
+    return call_user_func_array($algorithm, array($salt.$password));
+  }
+
+  /**
    * Sets the user password.
    *
    * @param string $password
